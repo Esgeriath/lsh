@@ -212,7 +212,6 @@ int main(int argc, char** argv) {
                     pthread_mutex_unlock(&lock);
                 }
                 else { // last one
-                    cmdcount++;
                     if (background) {
                         pthread_mutex_lock(&lock);
                         pushpid(&children, lastpid);
