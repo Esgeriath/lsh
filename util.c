@@ -55,7 +55,7 @@ cmdch* breakcommands(msvec* words) {
             nextCmd = true;
             do {
                 if (strcmp(words->arr[i].ptr, "|") == 0) { // that definitely is end of command
-                    if (usedfds & _mstdoutfd != 0) goto error;
+                    //if (usedfds & _mstdoutfd != 0) goto error;
                     //usedfds |= _mstdoutfd;
                     chain->cmds[chain->count].pipestonext = true;
                     pipefromprev = true; // for next one
@@ -107,7 +107,6 @@ error:
     //printf("ERROR in cmd production");
     chain->count++; // error can only occur when we started adding command
     freecmdch(chain);
-    free(chain);
     return NULL;
 }
 

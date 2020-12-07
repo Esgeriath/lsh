@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
                 }
             }
             if ((lastpid = fork()) == 0) {
-                if (pipefromprev && dup2(pipeout, 0)) {
+                if (pipefromprev && (dup2(pipeout, 0) != -1)) {
                     close(pipeout);
                 }
                 else if (pipefromprev) {
@@ -186,10 +186,6 @@ int main(int argc, char** argv) {
                     }
                     close(pipefd[0]);
                     close(pipefd[1]);
-                    pipefromprev = true;
-                }
-                else {
-                    pipefromprev = false;
                 }
 
                 char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
@@ -205,6 +201,10 @@ int main(int argc, char** argv) {
                 if (chain->cmds[i].pipestonext) {
                     pipeout = pipefd[0];
                     close(pipefd[1]);
+                    pipefromprev = true;
+                }
+                else {
+                    pipefromprev = false;
                 }
                 if (i != cmdcount - 1) { // not last one
                     pthread_mutex_lock(&lock);
