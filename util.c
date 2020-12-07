@@ -20,6 +20,7 @@ cmdch* breakcommands(msvec* words) {
     chain->size = 16;
     chain->count = 0;
     chain->cmds = malloc(chain->size * sizeof(cmd));
+    chain->words = words;
 
     bool nextCmd = true;
     unsigned char usedfds;
@@ -35,6 +36,7 @@ cmdch* breakcommands(msvec* words) {
             chain->cmds[chain->count].fd1 = NULL;
             chain->cmds[chain->count].fd2 = NULL;
             chain->cmds[chain->count].start = i;
+            chain->cmds[chain->count].stop = 0;
             nextCmd = false;
             if (pipefromprev) {
                 usedfds = _mstdinfd;
@@ -87,16 +89,20 @@ cmdch* breakcommands(msvec* words) {
                 }
             } while (++i < words->count);
 breakinnerloop:
-            if (usedfds == _usedallfd && pipefromprev && i < words->count) goto error;
+            if (pipefromprev && i >= words->count) goto error;
             chain->count++;
         }
+    }
+    if (chain->cmds[chain->count].stop == 0 && words->count > 1) {
+        chain->cmds[chain->count].stop = words->count;
     }
     if (usedfds == 0) {
         chain->count++;         // last cmd was not redirected anwhere, so
     }
     return chain;
 error:
-    // chain->count++; // is it needed?
+    //printf("ERROR in cmd production");
+    chain->count++; // error can only occur when we started adding command
     freecmdch(chain);
     free(chain);
     return NULL;
@@ -214,13 +220,14 @@ void freecmdch(cmdch* chain) {
     if (chain == NULL) return;
     free(chain->cmds);
     freemsvec(chain->words);
+    free(chain);
 }
-
+/*
 void freelast(msvec* vec) {
     free(vec->arr[vec->count - 1].ptr);
     vec->count--;
 }
-
+*/
 msvec* newmsvec() {
     msvec* vec = malloc(sizeof(msvec));
     vec->count = 0;

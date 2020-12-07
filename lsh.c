@@ -91,19 +91,21 @@ int main(int argc, char** argv) {
             words->count--;
         }
 
-        /*chain = breakcommands(words);/*
+        chain = breakcommands(words);
         if (chain == NULL) {
             perror("lsh: syntax error (bad fd managment)\n");
             goto prompt;
-        }
+        }/*
         for (int i = 0; i < chain->count; i++ ) {
             printf("cmd start: %s\n", words->arr[chain->cmds[i].start].ptr);
             char ** tmp = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
+            char** ptrr = tmp;
             while(*tmp != NULL) {
                 printf(" %s\n", *tmp);
                 tmp++;
             }
-        }
+            free(ptrr);
+        }*/
         
         if (words->count == 0) {
             goto prompt;
@@ -157,7 +159,7 @@ int main(int argc, char** argv) {
             goto prompt;
         }
         
-        printf("cmdcount: %d \n", chain->count);
+        //printf("cmdcount: %d \n", chain->count);
         int cmdcount = chain->count;
         int pipefd[2];
         bool pipefromprev = false;
@@ -223,12 +225,11 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+        //*/
         }
-        
 prompt:
         freecmdch(chain);
-        printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);*/
-        freecmdch(chain);
+        printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);
     }
 
     printf("\n");

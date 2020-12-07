@@ -73,7 +73,7 @@ void mstrcpy(mlstr* to, const char* from);
 void freecmdch(cmdch* chain);
 void freemsvec(msvec* vec);
 // this procedure deallocates last word in vector
-void freelast(msvec* vec);
+//void freelast(msvec* vec);
 void fittosize(mlstr* str, size_t size);
 msvec* newmsvec(); // empty vector
 
