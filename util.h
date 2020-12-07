@@ -1,6 +1,5 @@
-#ifndef MY_UTILS
-#define MY_UTILS 1
-
+#ifndef _UTIL_H_
+#define _UTIL_H_
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,20 +44,37 @@ struct command {
 };
 typedef struct command cmd;
 
-int breakcommands(cmd** cmds, msvec* words);
+struct commandchain {
+    msvec* words;
+    cmd* cmds;
+    size_t size;
+    size_t count;
+};
+typedef struct commandchain cmdch;
+
+
+cmdch* breakcommands(msvec* words);
 
 void pushpid(bcvec* vec, pid_t pid);
-// pushes copy of str to vec
+// pushes COPY of str to vec
 void pushstring(msvec* vec, const char* str);
 
 // this function breaks line into separete words, which are later stroed in
 // vec variable. Words are splitted on ' ', '\n' or '\t'
-void breakline(msvec* vec, char** stringptr);
+msvec* breakline(char** stringptr);
 
 // caution: thins function performs shallow copy
 char** getArgs(msvec* vec, int start, int end);
 
 void mstrcat(mlstr* to, const char* from);
 void mstrcpy(mlstr* to, const char* from);
+
+// this procedure deallocates everything recursively
+void freecmdch(cmdch* chain);
+void freemsvec(msvec* vec);
+// this procedure deallocates last word in vector
+void freelast(msvec* vec);
+void fittosize(mlstr* str, size_t size);
+msvec* newmsvec(); // empty vector
 
 #endif

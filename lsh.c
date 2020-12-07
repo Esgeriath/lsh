@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
 
     pthread_t zombieHunter;
     pthread_create(&zombieHunter, NULL, hunt, &children);
+    pthread_detach(zombieHunter);
 
     char name[32];          // for prompt
     char host[32];
@@ -71,18 +72,10 @@ int main(int argc, char** argv) {
     char path[PATH_MAX];
     getcwd(path, PATH_MAX);
 
-    msvec words;            // comand line splitted into a vector of words
-    words.count = 0;
-    words.size = 24;
-    words.arr = malloc(words.size * sizeof(mlstr));
-    for (int i = 0; i < words.size; i++) {
-        words.arr[i].bytes = 16;
-        words.arr[i].ptr = malloc(words.arr[i].bytes * sizeof(char));
-    }
+    msvec* words = NULL;        // comand line splitted into a vector of words
+    cmdch* chain = NULL;        // pointer to array of cmd objects
 
-    cmd* cmds = NULL;       // pointer to array of cmd objects
-
-    char *line = NULL;      // line from stdin
+    char *line = NULL;          // line from stdin
     size_t len = 0;
 
     int status; // exit status of last command
@@ -92,40 +85,40 @@ int main(int argc, char** argv) {
 
     // keep getting lines from stdin and do stuff with them
     while(getline(&line, &len, stdin) != -1) {
-        breakline(&words, &line);
-        bool background = strcmp(words.arr[words.count - 1].ptr, "&") == 0;
+        words = breakline(&line);
+        bool background = strcmp(words->arr[words->count - 1].ptr, "&") == 0;
         if (background) {
-            words.count--;
+            words->count--;
         }
 
-        int cmdcount = breakcommands(&cmds, &words);
-        for (int i = 0; i < cmdcount; i++ ) {
-            printf("cmd start: %s\n", words.arr[cmds[i].start].ptr);
-            char ** tmp = getArgs(&words, cmds[i].start, cmds[i].stop);
+        /*chain = breakcommands(words);/*
+        if (chain == NULL) {
+            perror("lsh: syntax error (bad fd managment)\n");
+            goto prompt;
+        }
+        for (int i = 0; i < chain->count; i++ ) {
+            printf("cmd start: %s\n", words->arr[chain->cmds[i].start].ptr);
+            char ** tmp = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
             while(*tmp != NULL) {
                 printf(" %s\n", *tmp);
                 tmp++;
             }
         }
-        if (cmdcount < 0) {
-            perror("lsh: syntax error (bad fd managment)\n");
-            goto prompt;
-        }
         
-        if (words.count == 0) {
+        if (words->count == 0) {
             goto prompt;
         }
-        if (strcmp(words.arr[0].ptr, "exit") == 0) {
+        if (strcmp(words->arr[0].ptr, "exit") == 0) {
             goto end;
         }
-        if (strcmp(words.arr[0].ptr, "cd") == 0) {
-            if (words.count == 1) { // no path
+        if (strcmp(words->arr[0].ptr, "cd") == 0) {
+            if (words->count == 1) { // no path
                 strcpy(path, homedir);
                 chdir(path);
             }
             else {
                 // cd to parent dir
-                if (strcmp(words.arr[1].ptr, "..") == 0) {
+                if (strcmp(words->arr[1].ptr, "..") == 0) {
                     if (strcmp(path, "/") != 0) {
                         for (int i = strlen(path);; i--) {
                             if (path[i] == '/') {
@@ -137,9 +130,9 @@ int main(int argc, char** argv) {
                     }
                 }
                 // absolute path
-                else if (words.arr[1].ptr[0] == '/') {
-                    if (chdir(words.arr[1].ptr) == 0) {
-                        strcpy(path, words.arr[1].ptr);
+                else if (words->arr[1].ptr[0] == '/') {
+                    if (chdir(words->arr[1].ptr) == 0) {
+                        strcpy(path, words->arr[1].ptr);
                     }
                     else {
                         perror("lsh: cd: no such directory\n");
@@ -147,11 +140,11 @@ int main(int argc, char** argv) {
                 }
                 // cd relative to current dir
                 else {
-                    int bytes = strlen(path) + strlen(words.arr[1].ptr) + 1;
+                    int bytes = strlen(path) + strlen(words->arr[1].ptr) + 1;
                     char* tmpstr = malloc(bytes * sizeof(char));
                     strcpy(tmpstr, path);
                     strcat(tmpstr, "/");
-                    strcat(tmpstr, words.arr[1].ptr);
+                    strcat(tmpstr, words->arr[1].ptr);
                     if (chdir(tmpstr) == 0) {
                         strcpy(path, tmpstr);
                     }
@@ -164,8 +157,8 @@ int main(int argc, char** argv) {
             goto prompt;
         }
         
-        printf("cmdcount: %d \n", cmdcount);
-        cmdcount--;
+        printf("cmdcount: %d \n", chain->count);
+        int cmdcount = chain->count;
         int pipefd[2];
         bool pipefromprev = false;
         int pipeout;
@@ -175,7 +168,8 @@ int main(int argc, char** argv) {
                     perror("lsh: Error creating a pipe. Comand not executed.\n");
                     goto prompt;
                 }
-            }*/
+            }
+    //pthread_join(zombieHunter, NULL);
             if ((lastpid = fork()) == 0) {
                 /*freopen(cmds[i].fd0, "r", stdin);
                 freopen(cmds[i].fd1, "w", stdout);
@@ -194,11 +188,11 @@ int main(int argc, char** argv) {
                     }
                     close(pipefd[0]);
                     close(pipefd[1]);
-                }*/
+                }
 
-                char** args = getArgs(&words, cmds[i].start, cmds[i].stop);
+                char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
                 printf("Hello from child!");
-                execvp(words.arr[0].ptr, args);
+                execvp(words->arr[0].ptr, args);
                 exit(47);
             }
             else {
@@ -208,7 +202,7 @@ int main(int argc, char** argv) {
                 if (cmds[i].pipestonext) {
                     pipeout = pipefd[0];
                     close(pipefd[1]);
-                }*/
+                }
                 if (i != cmdcount - 1) { // not last one
                     pthread_mutex_lock(&lock);
                     pushpid(&children, lastpid);
@@ -232,16 +226,15 @@ int main(int argc, char** argv) {
         }
         
 prompt:
-        free(cmds);
-        printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);
+        freecmdch(chain);
+        printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);*/
+        freecmdch(chain);
     }
 
     printf("\n");
 end:
-    // since it is the end of process, it is not nescesarry to free ram,
-    // so I don't.
-    //free(line);
-    //free(path);
-    //  free all strings in msvec words ...
+    pthread_cancel(zombieHunter);
+    free(children.pids);
+    free(line);
     return 0;
 }

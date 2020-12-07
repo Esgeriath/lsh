@@ -14,24 +14,27 @@ bool isredirector(const char* str) {
         || (strcmp(str, ">") == 0) || (strcmp(str, "2>") == 0);
 }
 
-int breakcommands(cmd** cmds, msvec* words) {
-    int cmdsize = 16;
-    *cmds = malloc(cmdsize * sizeof(cmd));
-    int cmdcount = 0;
+cmdch* breakcommands(msvec* words) {
+    cmdch* chain = malloc(sizeof(cmdch));
+
+    chain->size = 16;
+    chain->count = 0;
+    chain->cmds = malloc(chain->size * sizeof(cmd));
+
     bool nextCmd = true;
     unsigned char usedfds;
     bool pipefromprev = false;
 
     for (int i = 0 ; i < words->count; i++) {
         if (nextCmd) {
-            if (cmdcount == cmdsize) {
-                cmdsize += 16;
-                *cmds = realloc(*cmds, cmdsize * sizeof(cmd));
+            if (chain->count == chain->size) {
+                chain->size += 16;
+                chain->cmds = realloc(chain->cmds, chain->size * sizeof(cmd));
             }
-            (*cmds)[cmdcount].fd0 = NULL;
-            (*cmds)[cmdcount].fd1 = NULL;
-            (*cmds)[cmdcount].fd2 = NULL;
-            (*cmds)[cmdcount].start = i;
+            chain->cmds[chain->count].fd0 = NULL;
+            chain->cmds[chain->count].fd1 = NULL;
+            chain->cmds[chain->count].fd2 = NULL;
+            chain->cmds[chain->count].start = i;
             nextCmd = false;
             if (pipefromprev) {
                 usedfds = _mstdinfd;
@@ -42,13 +45,13 @@ int breakcommands(cmd** cmds, msvec* words) {
             pipefromprev = false;;
         }
         if (isredirector(words->arr[i].ptr)) {
-            (*cmds)[cmdcount].stop = i;
+            chain->cmds[chain->count].stop = i;
             nextCmd = true;
             do {
                 if (strcmp(words->arr[i].ptr, "|") == 0) { // that definitely is end of command
                     if (usedfds & _mstdoutfd != 0) goto error;
                     //usedfds |= _mstdoutfd;
-                    (*cmds)[cmdcount].pipestonext = true;
+                    chain->cmds[chain->count].pipestonext = true;
                     pipefromprev = true; // for next one
                     goto breakinnerloop;
                 }
@@ -57,7 +60,7 @@ int breakcommands(cmd** cmds, msvec* words) {
                     usedfds |= _mstdinfd;
                     i++;
                     if (i == words->count) goto error;
-                    (*cmds)[cmdcount].fd0 = words->arr[i].ptr;
+                    chain->cmds[chain->count].fd0 = words->arr[i].ptr;
                     /*(*cmds)[cmdcount].fd0 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
                     strcpy((*cmds)[cmdcount].fd0, words->arr[i].ptr);*/
                 }
@@ -66,7 +69,7 @@ int breakcommands(cmd** cmds, msvec* words) {
                     usedfds |= _mstdoutfd;
                     i++;
                     if (i == words->count) goto error;
-                    (*cmds)[cmdcount].fd1 = words->arr[i].ptr;
+                    chain->cmds[chain->count].fd1 = words->arr[i].ptr;
                     /*(*cmds)[cmdcount].fd1 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
                     strcpy((*cmds)[cmdcount].fd1, words->arr[i].ptr);*/
                 }
@@ -75,7 +78,7 @@ int breakcommands(cmd** cmds, msvec* words) {
                     usedfds |= _mstderrfd;
                     i++;
                     if (i == words->count) goto error;
-                    (*cmds)[cmdcount].fd2 = words->arr[i].ptr;
+                    chain->cmds[chain->count].fd2 = words->arr[i].ptr;
                     /*(*cmds)[cmdcount].fd2 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
                     strcpy((*cmds)[cmdcount].fd2, words->arr[i].ptr);*/
                 }
@@ -85,37 +88,37 @@ int breakcommands(cmd** cmds, msvec* words) {
             } while (++i < words->count);
 breakinnerloop:
             if (usedfds == _usedallfd && pipefromprev && i < words->count) goto error;
-            cmdcount++;
+            chain->count++;
         }
     }
     if (usedfds == 0) {
-        cmdcount++;         // last cmd was not redirected anwhere, so
+        chain->count++;         // last cmd was not redirected anwhere, so
     }
-    return cmdcount;
+    return chain;
 error:
-    /*for (int i = 0; i <= cmdcount; i++) {
-        free((*cmds)[i].fd0);
-        free((*cmds)[i].fd1);
-        free((*cmds)[i].fd2);
-    }*/
-    free(*cmds);
-    return -1;
+    // chain->count++; // is it needed?
+    freecmdch(chain);
+    free(chain);
+    return NULL;
 }
+
 
 
 
 // this function breaks line into separete words, which are later stroed in
 // vec variable. Words are splitted on ' ', '\n' or '\t'. Substring inside " "
 // is considerd one word.
-void breakline(msvec* vec, char** stringptr) {
+msvec* breakline(char** stringptr) {
+    msvec* vec = newmsvec();
+
 	char *ptr = strtok(*stringptr, " \t\n");
     int pos = 0;
     mlstr quotebuff;
     quotebuff.bytes = 32;
     quotebuff.ptr = malloc(quotebuff.bytes * sizeof(char));
     quotebuff.ptr[0] = '\0';
+
     bool quotemode = false;
-    vec->count = 0;
 
 	while(ptr != NULL) {
         if (quotemode || ptr[0] == '"') {
@@ -146,6 +149,7 @@ void breakline(msvec* vec, char** stringptr) {
 		ptr = strtok(NULL, " \t\n");
 	}
     free(quotebuff.ptr);
+    return vec;
 }
 
 // caution: thins function performs shallow copy
@@ -166,34 +170,68 @@ void pushpid(bcvec* vec, pid_t pid) {
     if (vec->count == vec->size) {
         vec->size += 16;
         vec->pids = realloc(vec->pids, vec->size * sizeof(pid_t));
+        for (int i = vec->count; i < vec->size; i++) {
+            vec->pids[i] = 0;
+        }
     }
     vec->pids[vec->count] = pid;
     vec->count++;
 }
 
 void pushstring(msvec* vec, const char* str) {
-    if (vec->count >= vec->size) {
+    if (vec->count == vec->size) {
         vec->size += 16;
         vec->arr = realloc(vec->arr, vec->size * sizeof(mlstr));
+        for (int i = vec->count; i < vec->size; i++) {
+            vec->arr[i].bytes = 0;
+            vec->arr[i].ptr = NULL;
+        }
     }
     mstrcpy(&(vec->arr[vec->count]), str);
     vec->count++;
 }
 
 void mstrcat(mlstr* to, const char* from) {
-    int len = strlen(to->ptr) + strlen(from);
-    if (to->bytes <= len) {
-        to->bytes = len + 10;
-        to->ptr = realloc(to->ptr, to->bytes * sizeof(char));
-    }
+    fittosize(to, strlen(from));
     strcat(to->ptr, from);
 }
 
 void mstrcpy(mlstr* to, const char* from) {
-    int len = strlen(from);
-    if (to->bytes <= len) {
-        to->bytes = len + 10;
-        to->ptr = realloc(to->ptr, to->bytes * sizeof(char));
-    }
+    fittosize(to, strlen(from));
     strcpy(to->ptr, from);
+}
+
+// internal procedure (not included in util.h)
+void freemsvec(msvec* vec) {
+    for (int i = 0; i < vec->size; i++) {
+        free(vec->arr[i].ptr);
+    }
+    free(vec->arr);
+    free(vec);
+}
+
+void freecmdch(cmdch* chain) {
+    if (chain == NULL) return;
+    free(chain->cmds);
+    freemsvec(chain->words);
+}
+
+void freelast(msvec* vec) {
+    free(vec->arr[vec->count - 1].ptr);
+    vec->count--;
+}
+
+msvec* newmsvec() {
+    msvec* vec = malloc(sizeof(msvec));
+    vec->count = 0;
+    vec->size = 0;
+    vec->arr = NULL;
+    return vec;
+}
+
+void fittosize(mlstr* str, size_t size) {
+    if (str->bytes <= size) {
+        str->bytes = size + 10;
+        str->ptr = realloc(str->ptr, str->bytes * sizeof(char));
+    }
 }
