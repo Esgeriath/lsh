@@ -23,6 +23,7 @@ cmdch* breakcommands(msvec* words) {
     chain->words = words;
 
     bool nextCmd = true;
+    bool endsWithRed = false;
     unsigned char usedfds;
     bool pipefromprev = false;
 
@@ -37,6 +38,7 @@ cmdch* breakcommands(msvec* words) {
             chain->cmds[chain->count].fd2 = NULL;
             chain->cmds[chain->count].start = i;
             chain->cmds[chain->count].stop = 0;
+            chain->cmds[chain->count].pipestonext = false;
             nextCmd = false;
             if (pipefromprev) {
                 usedfds = _mstdinfd;
@@ -44,9 +46,11 @@ cmdch* breakcommands(msvec* words) {
             else {
                 usedfds = 0;
             }
-            pipefromprev = false;;
+            pipefromprev = false;
+            endsWithRed = false;
         }
         if (isredirector(words->arr[i].ptr)) {
+            endsWithRed = true;
             chain->cmds[chain->count].stop = i;
             nextCmd = true;
             do {
@@ -93,12 +97,11 @@ breakinnerloop:
             chain->count++;
         }
     }
-    if (chain->cmds[chain->count].stop == 0 && words->count > 1) {
+    if (!endsWithRed) { // chain->cmds[chain->count].stop == 0 && words->count > 1
         chain->cmds[chain->count].stop = words->count;
+        chain->count++;
     }
-    if (usedfds == 0) {
-        chain->count++;         // last cmd was not redirected anwhere, so
-    }
+    //
     return chain;
 error:
     //printf("ERROR in cmd production");
@@ -207,7 +210,6 @@ void mstrcpy(mlstr* to, const char* from) {
     strcpy(to->ptr, from);
 }
 
-// internal procedure (not included in util.h)
 void freemsvec(msvec* vec) {
     for (int i = 0; i < vec->size; i++) {
         free(vec->arr[i].ptr);

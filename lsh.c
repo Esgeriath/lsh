@@ -165,43 +165,44 @@ int main(int argc, char** argv) {
         bool pipefromprev = false;
         int pipeout;
         for (int i = 0; i < cmdcount; i++) {
-            /*if (cmds[i].pipestonext) {
+            if (chain->cmds[i].pipestonext) {
                 if (pipe(pipefd) < 0) {
                     perror("lsh: Error creating a pipe. Comand not executed.\n");
                     goto prompt;
                 }
             }
-    //pthread_join(zombieHunter, NULL);
             if ((lastpid = fork()) == 0) {
-                /*freopen(cmds[i].fd0, "r", stdin);
-                freopen(cmds[i].fd1, "w", stdout);
-                freopen(cmds[i].fd2, "w", stderr);*/
-                /*if (pipefromprev && dup2(pipeout, 0)) {
+                if (pipefromprev && dup2(pipeout, 0)) {
                     close(pipeout);
                 }
                 else if (pipefromprev) {
                     perror("lsh: trouble connetting pipe; exiting subprocess...\n");
                     exit(47);
                 }
-                if (cmds[i].pipestonext) {
+                if (chain->cmds[i].pipestonext) {
                     if (dup2(pipefd[1], 1) != 1) {
                         perror("lsh: trouble connetting pipe; exiting subprocess...\n");
                         exit(47);
                     }
                     close(pipefd[0]);
                     close(pipefd[1]);
+                    pipefromprev = true;
+                }
+                else {
+                    pipefromprev = false;
                 }
 
                 char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
                 printf("Hello from child!");
+                sleep(1);
                 execvp(words->arr[0].ptr, args);
                 exit(47);
             }
             else {
-                /*if (pipefromprev) {
+                if (pipefromprev) {
                     close(pipeout);
                 }
-                if (cmds[i].pipestonext) {
+                if (chain->cmds[i].pipestonext) {
                     pipeout = pipefd[0];
                     close(pipefd[1]);
                 }
