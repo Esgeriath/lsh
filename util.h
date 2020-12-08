@@ -13,6 +13,8 @@
 #include <pwd.h>
 #include <limits.h>
 #include <pthread.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 struct mallstring {
     unsigned short bytes;   // how many char's were allocated

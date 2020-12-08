@@ -43,7 +43,7 @@ void* hunt(void* vec) {
     }
     return NULL;
 }
-//test
+
 int main(int argc, char** argv) {
     signal(SIGINT, ctrl_c);
     signal(SIGTSTP, ctrl_z);
@@ -131,6 +131,7 @@ int main(int argc, char** argv) {
                 }
             }
             if ((lastpid = fork()) == 0) {
+                // char * errmsg = NULL;
                 if (pipefromprev && (dup2(pipeout, 0) != -1)) {
                     close(pipeout);
                 }
@@ -145,6 +146,43 @@ int main(int argc, char** argv) {
                     }
                     close(pipefd[0]);
                     close(pipefd[1]);
+                }
+                if (chain->cmds[i].fd0 != NULL) {
+                    /*int fd0;
+                    if ((fd0 = open(chain->cmds[i].fd0, O_RDONLY)) == -1) {
+                        perror("lsh: file not found; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    if (dup2(fd0, 0) != 1) {
+                        perror("lsh: trouble redirecting fd0; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    close(fd0);*/
+                    freopen(chain->cmds[i].fd0, "r", stdin);
+                }
+                if (chain->cmds[i].fd1 != NULL) {
+                    int fd1;
+                    if ((fd1 = open(chain->cmds[i].fd1, O_WRONLY | O_CREAT | O_TRUNC)) == -1) {
+                        perror("lsh: error opening file; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    if (dup2(fd1, 1) != 1) {
+                        perror("lsh: trouble redirecting fd1; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    close(fd1);
+                }
+                if (chain->cmds[i].fd2 != NULL) {
+                    int fd2;
+                    if ((fd2 = open(chain->cmds[i].fd2, O_WRONLY | O_CREAT | O_TRUNC)) == -1) {
+                        perror("lsh: error opening file; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    if (dup2(fd2, 2) != 1) {
+                        perror("lsh: trouble redirecting fd2; exiting subprocess...\n");
+                        exit(47);
+                    }
+                    close(fd2);
                 }
 
                 char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
