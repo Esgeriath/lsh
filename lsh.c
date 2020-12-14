@@ -2,7 +2,8 @@
 
 pthread_mutex_t lock;
 pid_t lastpid;
-bcvec children;
+ccvec jobs;
+cmdch* lastJob;
 
 // CTRL+C handler
 void ctrl_c(int signal) {
@@ -13,7 +14,7 @@ void ctrl_c(int signal) {
 void ctrl_z(int signal) {
     kill(lastpid, signal);          // stop child
     pthread_mutex_lock(&lock);      // push it to background
-    pushpid(&children, lastpid);
+    pushchain(&jobs, lastJob);
     pthread_mutex_unlock(&lock);
 }
 
@@ -21,22 +22,32 @@ void* hunt(void* vec) {
     while (1) {
         sleep(1);
         pthread_mutex_lock(&lock);
-        for (int i = 0; i < ((bcvec*) vec)->count; i++) {
+        for (int i = 0; i < ((ccvec*) vec)->count; i++) {
             int status;
-            if (((bcvec*) vec)->pids[i] != 0) {
-                pid_t pid = waitpid(((bcvec*) vec)->pids[i], &status, WNOHANG);
-                if (pid != 0) {
-                    ((bcvec*) vec)->pids[i] = 0;
+            bool alldone = true;
+            for (int j = 0; j < ((ccvec*) vec)->arr[i]->count; j++) {
+                if (((ccvec*) vec)->arr[i]->cmds[j].pid != 0) {
+                    pid_t pid = waitpid(((ccvec*) vec)->arr[i]->cmds[j].pid, &status, WNOHANG);
+                    if (pid != 0) {
+                        ((ccvec*) vec)->arr[i]->cmds[j].pid = 0;
+                    }
+                    else {
+                        alldone = false;
+                    }
                 }
             }
+            if (alldone) {
+                freecmdch(((ccvec*) vec)->arr[i]);
+                ((ccvec*) vec)->arr[i] = NULL;
+            }
         }
-        for (int i = ((bcvec*) vec)->count - 1; i >= 0; i--) {
-            if (((bcvec*) vec)->pids[i] != 0) {
-                ((bcvec*) vec)->count = i + 1;
+        for (int i = ((ccvec*) vec)->count - 1; i >= 0; i--) {
+            if (((ccvec*) vec)->arr[i] != NULL) {
+                ((ccvec*) vec)->count = i + 1;
                 break;
             }
             if (i == 0) {
-                ((bcvec*) vec)->count = 0;
+                ((ccvec*) vec)->count = 0;
             }
         }
         pthread_mutex_unlock(&lock);
@@ -48,14 +59,14 @@ int main(int argc, char** argv) {
     signal(SIGINT, ctrl_c);
     signal(SIGTSTP, ctrl_z);
     
-    children.size = 16;
-    children.count = 0;
-    children.pids = malloc(children.size * sizeof(pid_t));
+    jobs.size = 16;
+    jobs.count = 0;
+    jobs.arr = malloc(jobs.size * sizeof(cmdch*));
 
     pthread_mutex_init(&lock, NULL);
 
     pthread_t zombieHunter;
-    pthread_create(&zombieHunter, NULL, hunt, &children);
+    pthread_create(&zombieHunter, NULL, hunt, &jobs);
     pthread_detach(zombieHunter);
 
     char name[32];          // for prompt
@@ -121,8 +132,8 @@ int main(int argc, char** argv) {
             goto prompt;
         }
         int pipefd[2];
+        int pipein;
         bool pipefromprev = false;
-        int pipeout;
         for (int i = 0; i < chain->count; i++) {
             if (chain->cmds[i].pipestonext) {
                 if (pipe(pipefd) < 0) {
@@ -132,69 +143,43 @@ int main(int argc, char** argv) {
             }
             if ((lastpid = fork()) == 0) {
                 // char * errmsg = NULL;
-                if (pipefromprev && (dup2(pipeout, 0) != -1)) {
-                    close(pipeout);
-                }
-                else if (pipefromprev) {
-                    perror("lsh: trouble connetting pipe; exiting subprocess...\n");
-                    exit(47);
+                
+                if (pipefromprev) {
+                    if ((dup2(pipein, 0) != 0)) {
+                        perror("lsh: trouble connectting pipein; exiting subprocess... ");
+                        exit(47);
+                    }
+                    close(pipein);
                 }
                 if (chain->cmds[i].pipestonext) {
                     if (dup2(pipefd[1], 1) != 1) {
-                        perror("lsh: trouble connetting pipe; exiting subprocess...\n");
+                        perror("lsh: trouble connectting pipeout; exiting subprocess... ");
                         exit(47);
                     }
                     close(pipefd[0]);
                     close(pipefd[1]);
                 }
+
                 if (chain->cmds[i].fd0 != NULL) {
-                    /*int fd0;
-                    if ((fd0 = open(chain->cmds[i].fd0, O_RDONLY)) == -1) {
-                        perror("lsh: file not found; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    if (dup2(fd0, 0) != 1) {
-                        perror("lsh: trouble redirecting fd0; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    close(fd0);*/
                     freopen(chain->cmds[i].fd0, "r", stdin);
                 }
                 if (chain->cmds[i].fd1 != NULL) {
-                    int fd1;
-                    if ((fd1 = open(chain->cmds[i].fd1, O_WRONLY | O_CREAT | O_TRUNC)) == -1) {
-                        perror("lsh: error opening file; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    if (dup2(fd1, 1) != 1) {
-                        perror("lsh: trouble redirecting fd1; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    close(fd1);
+                    freopen(chain->cmds[i].fd1, "w", stdout);
                 }
                 if (chain->cmds[i].fd2 != NULL) {
-                    int fd2;
-                    if ((fd2 = open(chain->cmds[i].fd2, O_WRONLY | O_CREAT | O_TRUNC)) == -1) {
-                        perror("lsh: error opening file; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    if (dup2(fd2, 2) != 1) {
-                        perror("lsh: trouble redirecting fd2; exiting subprocess...\n");
-                        exit(47);
-                    }
-                    close(fd2);
+                    freopen(chain->cmds[i].fd2, "w", stderr);
                 }
 
                 char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
-                execvp(words->arr[0].ptr, args);
+                execvp(args[0], args);
                 exit(47);
             }
             else {
                 if (pipefromprev) {
-                    close(pipeout);
+                    close(pipein);
                 }
                 if (chain->cmds[i].pipestonext) {
-                    pipeout = pipefd[0];
+                    pipein = pipefd[0];
                     close(pipefd[1]);
                     pipefromprev = true;
                 }
@@ -202,20 +187,27 @@ int main(int argc, char** argv) {
                     pipefromprev = false;
                 }
                 if (i != chain->count - 1) { // not last one
-                    pthread_mutex_lock(&lock);
-                    pushpid(&children, lastpid);
-                    pthread_mutex_unlock(&lock);
+                    //pthread_mutex_lock(&lock);
+                    chain->cmds[i].pid = lastpid;
+                    //pthread_mutex_unlock(&lock);
                 }
                 else { // last one
                     if (background) {
                         pthread_mutex_lock(&lock);
-                        pushpid(&children, lastpid);
+                        // pushpid(&children, lastpid);
+                        chain->cmds[chain->count - 1].pid = lastpid;
+                        pushchain(&jobs, chain);
                         pthread_mutex_unlock(&lock);
                     }
                     else {
+                        pthread_mutex_lock(&lock);
+                        // pushpid(&children, lastpid);
+                        chain->cmds[chain->count - 1].pid = lastpid;
+                        pushchain(&jobs, chain);
                         waitpid(lastpid, &status, WUNTRACED);
+                        pthread_mutex_unlock(&lock);
                         if (status == 12032) {
-                            perror("lsh: command execution failure\n");
+                            perror("lsh: command execution failure ");
                         }
                     }
                 }
@@ -224,7 +216,7 @@ int main(int argc, char** argv) {
         }
 prompt:
         if (not_built_in) {
-            freecmdch(chain);
+            //freecmdch(chain);
         }
         else {
             freemsvec(words);
@@ -235,7 +227,10 @@ prompt:
     printf("\n");
 end:
     pthread_cancel(zombieHunter);
-    free(children.pids);
+    for (int i = 0; i < jobs.count; i++) {
+        freecmdch(jobs.arr[i]);
+    }
+    free(jobs.arr);
     free(line);
     return 0;
 }

@@ -174,15 +174,15 @@ char** getArgs(msvec* vec, int start, int end) {
     return arr;
 }
 
-void pushpid(bcvec* vec, pid_t pid) {
+void pushchain(ccvec* vec, cmdch* chain) {
     if (vec->count == vec->size) {
         vec->size += 16;
-        vec->pids = realloc(vec->pids, vec->size * sizeof(pid_t));
+        vec->arr = realloc(vec->arr, vec->size * sizeof(cmdch*));
         for (int i = vec->count; i < vec->size; i++) {
-            vec->pids[i] = 0;
+            vec->arr[i] = NULL;
         }
     }
-    vec->pids[vec->count] = pid;
+    vec->arr[vec->count] = chain;
     vec->count++;
 }
 

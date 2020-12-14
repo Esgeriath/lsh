@@ -29,13 +29,6 @@ struct mallstringvector {
 };
 typedef struct mallstringvector msvec;
 
-struct backgroundchildrenvector {
-    size_t size;
-    size_t count;
-    pid_t* pids;
-};
-typedef struct backgroundchildrenvector bcvec;
-
 struct command {
     unsigned short start;   // index of the beginning of args
     unsigned short stop;    // index of first non-arg word
@@ -43,6 +36,7 @@ struct command {
     char* fd1;              // stdout
     char* fd2;              // stderr
     bool pipestonext;
+    pid_t pid;
 };
 typedef struct command cmd;
 
@@ -54,10 +48,17 @@ struct commandchain {
 };
 typedef struct commandchain cmdch;
 
+struct commandchainvector {
+    size_t size;
+    size_t count;
+    cmdch** arr;
+};
+typedef struct commandchainvector ccvec;
+
 
 cmdch* breakcommands(msvec* words);
 
-void pushpid(bcvec* vec, pid_t pid);
+void pushchain(ccvec* vec, cmdch* chain);
 // pushes COPY of str to vec
 void pushstring(msvec* vec, const char* str);
 

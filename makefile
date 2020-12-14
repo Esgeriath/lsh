@@ -1,4 +1,4 @@
-debug = 
+debug = -g
 all: lsh.o util.o
 	gcc -o lsh util.o lsh.o -lpthread
 
