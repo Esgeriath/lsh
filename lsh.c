@@ -7,29 +7,35 @@ cmdch* lastJob;
 
 // CTRL+C handler
 void ctrl_c(int signal) {
-    kill(lastpid, signal);
+    //kill(lastpid, signal);
+    if (lastJob != NULL) {
+        killpg(lastJob->cmds[0].pid, signal);
+    }
 }
 
 // CTRL+Z handler
 void ctrl_z(int signal) {
-    kill(lastpid, signal);          // stop child
+    if (lastJob == NULL) {
+        return;
+    }
+    killpg(lastJob->cmds[0].pid, signal);
     pthread_mutex_lock(&lock);      // push it to background
     pushchain(&jobs, lastJob);
     pthread_mutex_unlock(&lock);
 }
 
-void* hunt(void* vec) {
+void* hunt() {
     while (1) {
         sleep(1);
         pthread_mutex_lock(&lock);
-        for (int i = 0; i < ((ccvec*) vec)->count; i++) {
+        for (int i = 0; i < jobs.count; i++) {
             int status;
             bool alldone = true;
-            for (int j = 0; j < ((ccvec*) vec)->arr[i]->count; j++) {
-                if (((ccvec*) vec)->arr[i]->cmds[j].pid != 0) {
-                    pid_t pid = waitpid(((ccvec*) vec)->arr[i]->cmds[j].pid, &status, WNOHANG);
+            for (int j = 0; j < jobs.arr[i]->count; j++) {
+                if (jobs.arr[i]->cmds[j].pid != 0) {
+                    pid_t pid = waitpid(jobs.arr[i]->cmds[j].pid, &status, WNOHANG);
                     if (pid != 0) {
-                        ((ccvec*) vec)->arr[i]->cmds[j].pid = 0;
+                        jobs.arr[i]->cmds[j].pid = 0;
                     }
                     else {
                         alldone = false;
@@ -37,17 +43,17 @@ void* hunt(void* vec) {
                 }
             }
             if (alldone) {
-                freecmdch(((ccvec*) vec)->arr[i]);
-                ((ccvec*) vec)->arr[i] = NULL;
+                freecmdch(jobs.arr[i]);
+                jobs.arr[i] = NULL;
             }
         }
-        for (int i = ((ccvec*) vec)->count - 1; i >= 0; i--) {
-            if (((ccvec*) vec)->arr[i] != NULL) {
-                ((ccvec*) vec)->count = i + 1;
+        for (int i = jobs.count - 1; i >= 0; i--) {
+            if (jobs.arr[i] != NULL) {
+                jobs.count = i + 1;
                 break;
             }
             if (i == 0) {
-                ((ccvec*) vec)->count = 0;
+                jobs.count = 0;
             }
         }
         pthread_mutex_unlock(&lock);
@@ -66,15 +72,8 @@ int main(int argc, char** argv) {
     pthread_mutex_init(&lock, NULL);
 
     pthread_t zombieHunter;
-    pthread_create(&zombieHunter, NULL, hunt, &jobs);
+    pthread_create(&zombieHunter, NULL, hunt, NULL);
     pthread_detach(zombieHunter);
-
-    char name[32];          // for prompt
-    char host[32];
-    getlogin_r(name, 32);
-    gethostname(host, 32);
-    name[31] = '\0';
-    host[31] = '\0';
 
     struct passwd *pw = getpwuid(getuid());
     char homedir[PATH_MAX];
@@ -93,18 +92,20 @@ int main(int argc, char** argv) {
     bool not_built_in = false;
 
     // initial prompt
-    printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);
+    printf("\x1B[01;38;5;51m%s\x1B[0m >>> ", path);
 
     // keep getting lines from stdin and do stuff with them
     while(getline(&line, &len, stdin) != -1) {
         words = breakline(&line);
-        bool background = strcmp(words->arr[words->count - 1].ptr, "&") == 0;
-        if (background) {
-            words->count--; // "rmoving" last word, that is "&"
-        }
+        
+        // built-in commands:
         not_built_in = false;
         if (words->count == 0) {
             goto prompt;
+        }
+        bool background = strcmp(words->arr[words->count - 1].ptr, "&") == 0;
+        if (background) {
+            words->count--; // "removing" last word, that is "&"
         }
         if (strcmp(words->arr[0].ptr, "exit") == 0) {
             freemsvec(words);
@@ -123,17 +124,27 @@ int main(int argc, char** argv) {
             }
             goto prompt;
         }
+        if (strcmp(words->arr[0].ptr, "jobs") == 0) {
+            for (int i = 0; i < jobs.count; i++) {
+                if (jobs.arr[i] != NULL) {
+                    printf("[%d]\t%s\n", i, jobs.arr[i]->words->arr[jobs.arr[i]->cmds->start].ptr);
+                }
+            }
+            goto prompt;
+        }
 
         not_built_in = true;
         
         chain = breakcommands(words);
         if (chain == NULL) {
-            perror("lsh: syntax error (bad fd managment)\n");
+            perror("lsh: syntax error (bad fd management)\n");
             goto prompt;
         }
+        lastJob = chain;
         int pipefd[2];
         int pipein;
         bool pipefromprev = false;
+        pid_t groupId;
         for (int i = 0; i < chain->count; i++) {
             if (chain->cmds[i].pipestonext) {
                 if (pipe(pipefd) < 0) {
@@ -142,7 +153,12 @@ int main(int argc, char** argv) {
                 }
             }
             if ((lastpid = fork()) == 0) {
-                // char * errmsg = NULL;
+                if (i == 0) {
+                    setpgid(0, 0); // making first process group leader
+                }
+                else {
+                    setpgid(0, groupId); // moving next processes to the group
+                }
                 
                 if (pipefromprev) {
                     if ((dup2(pipein, 0) != 0)) {
@@ -175,6 +191,11 @@ int main(int argc, char** argv) {
                 exit(47);
             }
             else {
+                if (i == 0) {
+                    groupId = lastpid;          // save group leader id
+                }
+                setpgid(lastpid, groupId);      // set pgid of current child
+
                 if (pipefromprev) {
                     close(pipein);
                 }
@@ -186,23 +207,16 @@ int main(int argc, char** argv) {
                 else {
                     pipefromprev = false;
                 }
-                if (i != chain->count - 1) { // not last one
-                    //pthread_mutex_lock(&lock);
-                    chain->cmds[i].pid = lastpid;
-                    //pthread_mutex_unlock(&lock);
-                }
-                else { // last one
+                chain->cmds[i].pid = lastpid;
+                if (i == chain->count - 1) { // last one
                     if (background) {
+                        lastJob = NULL;
                         pthread_mutex_lock(&lock);
-                        // pushpid(&children, lastpid);
-                        chain->cmds[chain->count - 1].pid = lastpid;
                         pushchain(&jobs, chain);
                         pthread_mutex_unlock(&lock);
                     }
                     else {
                         pthread_mutex_lock(&lock);
-                        // pushpid(&children, lastpid);
-                        chain->cmds[chain->count - 1].pid = lastpid;
                         pushchain(&jobs, chain);
                         waitpid(lastpid, &status, WUNTRACED);
                         pthread_mutex_unlock(&lock);
@@ -221,7 +235,7 @@ prompt:
         else {
             freemsvec(words);
         }
-        printf("\x1B[36;1m%s@%s\x1B[0m:\x1B[37;1m%s\x1B[0m$ ", name, host, path);
+        printf("\x1B[01;38;5;51m%s\x1B[0m >>> ", path); // 35 - pink; 33 -yellow; 32 - green; 31 -red "\x1B[01;38m%s\x1B[0m >>> "
     }
 
     printf("\n");

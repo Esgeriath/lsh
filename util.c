@@ -115,7 +115,7 @@ error:
 
 // this function breaks line into separete words, which are later stroed in
 // vec variable. Words are splitted on ' ', '\n' or '\t'. Substring inside " "
-// is considerd one word.
+// is considered one word.
 msvec* breakline(char** stringptr) {
     msvec* vec = newmsvec();
 
