@@ -1,12 +1,13 @@
 #include "util.h"
 
-pthread_mutex_t lock;
-pid_t lastpid;
-ccvec jobs;
-cmdch* lastJob;
+static pthread_mutex_t lock;
+static pid_t lastpid;
+static ccvec jobs;
+static cmdch* lastJob;
+static int status;              // last return status
 
 // CTRL+C handler
-void ctrl_c(int signal) {
+static void ctrl_c(int signal) {
     //kill(lastpid, signal);
     if (lastJob != NULL) {
         killpg(lastJob->cmds[0].pid, signal);
@@ -14,7 +15,7 @@ void ctrl_c(int signal) {
 }
 
 // CTRL+Z handler
-void ctrl_z(int signal) {
+static void ctrl_z(int signal) {
     if (lastJob == NULL) {
         return;
     }
@@ -24,12 +25,11 @@ void ctrl_z(int signal) {
     pthread_mutex_unlock(&lock);
 }
 
-void* hunt() {
+static void* hunt() {
     while (1) {
         sleep(1);
         pthread_mutex_lock(&lock);
         for (int i = 0; i < jobs.count; i++) {
-            int status;
             bool alldone = true;
             for (int j = 0; j < jobs.arr[i]->count; j++) {
                 if (jobs.arr[i]->cmds[j].pid != 0) {
@@ -61,6 +61,111 @@ void* hunt() {
     return NULL;
 }
 
+static void launch_process(cmdch* chain, int i, int pipein, int pipefd[2], 
+                            pid_t groupId, bool pipefromprev, bool foreground) {
+
+    setpgid(0, groupId); // moving next processes to the group. In case of 0 setting group leader
+    if (foreground) {
+        tcsetpgrp (STDIN_FILENO, groupId);
+    }
+
+    signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGTTIN, SIG_DFL);
+    signal(SIGTTOU, SIG_DFL);
+    signal(SIGCHLD, SIG_DFL);
+    
+    if (pipefromprev) {
+        if ((dup2(pipein, 0) != 0)) {
+            perror("lsh: trouble connectting pipein; exiting subprocess... ");
+            exit(47);
+        }
+        close(pipein);
+    }
+    if (chain->cmds[i].pipestonext) {
+        if (dup2(pipefd[1], 1) != 1) {
+            perror("lsh: trouble connectting pipeout; exiting subprocess... ");
+            exit(47);
+        }
+        close(pipefd[0]);
+        close(pipefd[1]);
+    }
+
+    if (chain->cmds[i].fd0 != NULL) {
+        freopen(chain->cmds[i].fd0, "r", stdin);
+    }
+    if (chain->cmds[i].fd1 != NULL) {
+        freopen(chain->cmds[i].fd1, "w", stdout);
+    }
+    if (chain->cmds[i].fd2 != NULL) {
+        freopen(chain->cmds[i].fd2, "w", stderr);
+    }
+
+    char** args = getArgs(chain->words, chain->cmds[i].start, chain->cmds[i].stop);
+    execvp(args[0], args);
+    exit(47);
+}
+
+static void launch_job(cmdch* chain, bool background) {
+    lastJob = chain;
+    int pipefd[2];
+    int pipein;
+    bool pipefromprev = false;
+    pid_t groupId = 0;
+
+    for (int i = 0; i < chain->count; i++) {
+        if (chain->cmds[i].pipestonext) {
+            if (pipe(pipefd) < 0) {
+                perror("lsh: Error creating a pipe. Comand not executed.\n");
+                return;
+            }
+        }
+        if ((lastpid = fork()) == 0) {
+            launch_process(chain,i, pipein, pipefd, groupId, pipefromprev, !background);
+        }
+        else {
+            if (i == 0) {
+                groupId = lastpid;          // save group leader id
+            }
+            setpgid(lastpid, groupId);      // set pgid of current child
+            if (!background) {
+                tcsetpgrp(STDIN_FILENO, groupId);
+            }
+
+            if (pipefromprev) {
+                close(pipein);
+            }
+            if (chain->cmds[i].pipestonext) {
+                pipein = pipefd[0];
+                close(pipefd[1]);
+                pipefromprev = true;
+            }
+            else {
+                pipefromprev = false;
+            }
+            chain->cmds[i].pid = lastpid;
+            if (i == chain->count - 1) { // last one
+                if (background) {
+                    lastJob = NULL;
+                    pthread_mutex_lock(&lock);
+                    pushchain(&jobs, chain);
+                    pthread_mutex_unlock(&lock);
+                }
+                else {
+                    pthread_mutex_lock(&lock);
+                    pushchain(&jobs, chain);
+                    waitpid(lastpid, &status, WUNTRACED);
+                    pthread_mutex_unlock(&lock);
+                    if (status == 12032) {
+                        perror("lsh: command execution failure ");
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     signal(SIGINT, ctrl_c);
     signal(SIGTSTP, ctrl_z);
@@ -83,13 +188,25 @@ int main(int argc, char** argv) {
     getcwd(path, PATH_MAX);
 
     msvec* words = NULL;        // comand line splitted into a vector of words
-    cmdch* chain = NULL;        // pointer to array of cmd objects
 
     char *line = NULL;          // line from stdin
     size_t len = 0;
 
-    int status; // exit status of last command
-    bool not_built_in = false;
+    bool built_in = true;
+
+
+    if (setpgid(getpid(), getpid()) < 0) {
+        perror ("Couldn't put the shell in its own process group");
+        exit (1);
+    }
+    tcsetpgrp (STDIN_FILENO, getpid());
+
+    signal(SIGINT, SIG_IGN);
+    //signal (SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
 
     // initial prompt
     printf("\x1B[01;38;5;51m%s\x1B[0m >>> ", path);
@@ -99,7 +216,7 @@ int main(int argc, char** argv) {
         words = breakline(&line);
         
         // built-in commands:
-        not_built_in = false;
+        built_in = true;
         if (words->count == 0) {
             goto prompt;
         }
@@ -133,114 +250,26 @@ int main(int argc, char** argv) {
             goto prompt;
         }
 
-        not_built_in = true;
+        built_in = false;
         
-        chain = breakcommands(words);
+        cmdch* chain = breakcommands(words);
         if (chain == NULL) {
             perror("lsh: syntax error (bad fd management)\n");
             goto prompt;
         }
-        lastJob = chain;
-        int pipefd[2];
-        int pipein;
-        bool pipefromprev = false;
-        pid_t groupId;
-        for (int i = 0; i < chain->count; i++) {
-            if (chain->cmds[i].pipestonext) {
-                if (pipe(pipefd) < 0) {
-                    perror("lsh: Error creating a pipe. Comand not executed.\n");
-                    goto prompt;
-                }
-            }
-            if ((lastpid = fork()) == 0) {
-                if (i == 0) {
-                    setpgid(0, 0); // making first process group leader
-                }
-                else {
-                    setpgid(0, groupId); // moving next processes to the group
-                }
-                
-                if (pipefromprev) {
-                    if ((dup2(pipein, 0) != 0)) {
-                        perror("lsh: trouble connectting pipein; exiting subprocess... ");
-                        exit(47);
-                    }
-                    close(pipein);
-                }
-                if (chain->cmds[i].pipestonext) {
-                    if (dup2(pipefd[1], 1) != 1) {
-                        perror("lsh: trouble connectting pipeout; exiting subprocess... ");
-                        exit(47);
-                    }
-                    close(pipefd[0]);
-                    close(pipefd[1]);
-                }
+        launch_job(chain, background);
 
-                if (chain->cmds[i].fd0 != NULL) {
-                    freopen(chain->cmds[i].fd0, "r", stdin);
-                }
-                if (chain->cmds[i].fd1 != NULL) {
-                    freopen(chain->cmds[i].fd1, "w", stdout);
-                }
-                if (chain->cmds[i].fd2 != NULL) {
-                    freopen(chain->cmds[i].fd2, "w", stderr);
-                }
-
-                char** args = getArgs(words, chain->cmds[i].start, chain->cmds[i].stop);
-                execvp(args[0], args);
-                exit(47);
-            }
-            else {
-                if (i == 0) {
-                    groupId = lastpid;          // save group leader id
-                }
-                setpgid(lastpid, groupId);      // set pgid of current child
-
-                if (pipefromprev) {
-                    close(pipein);
-                }
-                if (chain->cmds[i].pipestonext) {
-                    pipein = pipefd[0];
-                    close(pipefd[1]);
-                    pipefromprev = true;
-                }
-                else {
-                    pipefromprev = false;
-                }
-                chain->cmds[i].pid = lastpid;
-                if (i == chain->count - 1) { // last one
-                    if (background) {
-                        lastJob = NULL;
-                        pthread_mutex_lock(&lock);
-                        pushchain(&jobs, chain);
-                        pthread_mutex_unlock(&lock);
-                    }
-                    else {
-                        pthread_mutex_lock(&lock);
-                        pushchain(&jobs, chain);
-                        waitpid(lastpid, &status, WUNTRACED);
-                        pthread_mutex_unlock(&lock);
-                        if (status == 12032) {
-                            perror("lsh: command execution failure ");
-                        }
-                    }
-                }
-            }
-        //*/
-        }
 prompt:
-        if (not_built_in) {
-            //freecmdch(chain);
-        }
-        else {
+        if (built_in) {
             freemsvec(words);
         }
-        printf("\x1B[01;38;5;51m%s\x1B[0m >>> ", path); // 35 - pink; 33 -yellow; 32 - green; 31 -red "\x1B[01;38m%s\x1B[0m >>> "
-    }
+        printf("\x1B[01;38;5;51m%s\x1B[0m >>> ", path);
+    } // end of while(getline)
 
     printf("\n");
 end:
     pthread_cancel(zombieHunter);
+    // last lines can be commented, as we are exiting the process
     for (int i = 0; i < jobs.count; i++) {
         freecmdch(jobs.arr[i]);
     }
