@@ -1,6 +1,6 @@
 debug = -g
 all: lsh.o util.o jobs.o
-	gcc -o lsh util.o lsh.o jobs.o -lpthread
+	gcc -o lsh util.o lsh.o jobs.o
 
 util.o: util.c util.h
 	gcc $(debug) util.c -o util.o -c

@@ -166,16 +166,15 @@ char** getArgs(msvec* vec, int start, int end) {
     return arr;
 }
 
-void pushchain(ccvec* vec, cmdch* chain) {
-    if (vec->count == vec->size) {
-        vec->size += 16;
-        vec->arr = realloc(vec->arr, vec->size * sizeof(cmdch*));
-        for (int i = vec->count; i < vec->size; i++) {
-            vec->arr[i] = NULL;
-        }
+void pushchain(cmdch* chain) {
+    unsigned short last_internal_id = 0;
+    cmdch** ptr = &first_job;
+    while (*ptr) {
+        last_internal_id = (*ptr)->internal_job_id;
+        ptr = &(*ptr)->next_job;
     }
-    vec->arr[vec->count] = chain;
-    vec->count++;
+    *ptr = chain;
+    chain->internal_job_id = last_internal_id + 1;
 }
 
 void pushstring(msvec* vec, const char* str) {
@@ -210,6 +209,16 @@ void freemsvec(msvec* vec) {
     free(vec);
 }
 
+void freeall(cmdch* chain) {
+    cmdch* tmp;
+    while (chain) {
+        tmp = chain->next_job;
+        freecmdch(chain);
+        //free(chain); // done in freecmdch
+        chain = tmp;
+    }
+}
+
 void freecmdch(cmdch* chain) {
     if (chain == NULL) return;
     cmd* curr = chain->first;
@@ -220,14 +229,10 @@ void freecmdch(cmdch* chain) {
         curr = nx;
     }
     freemsvec(chain->words);
+    free(chain->line);
     free(chain);
 }
-/*
-void freelast(msvec* vec) {
-    free(vec->arr[vec->count - 1].ptr);
-    vec->count--;
-}
-*/
+
 msvec* newmsvec() {
     msvec* vec = malloc(sizeof(msvec));
     vec->count = 0;
@@ -255,4 +260,29 @@ char* getLine(msvec* vec) {
         strcat(line, " ");
     }
     return line;
+}
+
+// Find the job with the indicated pgid
+cmdch* find_job(pid_t pgid) {
+    for (cmdch* ptr = first_job; ptr; ptr = ptr->next_job)
+        if (ptr->pgid == pgid)
+            return ptr;
+    return NULL;
+}
+
+// Return true if all processes in the job have stopped or completed.
+bool job_is_stopped(cmdch* chain) {
+    for (cmd* p = chain->first; p; p = p->next)
+        if (!(p->status & (S_FINISHED | S_STOPPED)))
+            return false;
+    return true;
+}
+
+
+// Return true if all processes in the job have completed.
+bool job_is_completed(cmdch* chain) {
+    for (cmd *p = chain->first; p; p = p->next)
+        if (!(p->status & S_FINISHED))
+            return false;
+    return true;
 }

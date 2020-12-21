@@ -3,17 +3,22 @@
 
 #include "util.h"
 
+#include <sys/types.h>
+#include <termios.h>
+#include <unistd.h>
 
-pid_t lastpid;
-cmdch* lastJob;
-ccvec jobs;
-int status;             // last return status
-
-void init_job_control();
-void background(cmdch* job, int cont);
+int lsh_terminal;
+int lsh_is_interactive;
+pid_t lsh_pgid;
+struct termios lsh_modes;
 
 void launch_process(cmd* command, msvec* words, int pipein, int pipefd[2], 
                             pid_t groupId, bool pipefromprev, bool foreground);
 void launch_job(cmdch* chain, bool background);
+
+void put_job_in_foreground(cmdch* chain, bool cont);
+void put_job_in_background(cmdch* chain, bool cont);
+
+void do_job_notification();
 
 #endif
