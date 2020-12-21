@@ -16,44 +16,45 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-struct mallstring {
+#define S_UNKNOWN   ((unsigned char)0b00000000)
+#define S_RUNNING   ((unsigned char)0b00000001)
+#define S_STOPPED    ((unsigned char)0b00000010)
+#define S_FINISHED  ((unsigned char)0b00000100)
+
+typedef struct mallocstring {
     unsigned short bytes;   // how many char's were allocated
     char* ptr;              // pointer to string
-};
-typedef struct mallstring mlstr;
+} mlstr;
 
-struct mallstringvector {
+typedef struct mallstringvector {
     unsigned short size;    // how many mlstr's were allocated
     unsigned short count;   // how many are used
     mlstr* arr;             // pointer to array of mlstr
-};
-typedef struct mallstringvector msvec;
+} msvec;
 
-struct command {
+typedef struct command {
     unsigned short start;   // index of the beginning of args
     unsigned short stop;    // index of first non-arg word
     char* fd0;              // stdin
     char* fd1;              // stdout
     char* fd2;              // stderr
-    bool pipestonext;
+    struct command* next;
+    unsigned char status;   // running/finished/... up to 8, but i'll set less ig
     pid_t pid;
-};
-typedef struct command cmd;
+} cmd;
 
-struct commandchain {
+typedef struct commandchain {
+    cmd* first;
     msvec* words;
-    cmd* cmds;
-    size_t size;
-    size_t count;
-};
-typedef struct commandchain cmdch;
+    char* line;
+    char status;            // status of whole job - uses same things as cmd ig
+} cmdch;
 
-struct commandchainvector {
+ typedef struct commandchainvector {
     size_t size;
     size_t count;
     cmdch** arr;
-};
-typedef struct commandchainvector ccvec;
+} ccvec;
 
 
 cmdch* breakcommands(msvec* words);
@@ -79,5 +80,8 @@ void freemsvec(msvec* vec);
 //void freelast(msvec* vec);
 void fittosize(mlstr* str, size_t size);
 msvec* newmsvec(); // empty vector
+
+// returns line allocated on heap
+char* getLine(msvec* vec);
 
 #endif

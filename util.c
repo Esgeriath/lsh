@@ -14,13 +14,26 @@ bool isredirector(const char* str) {
         || (strcmp(str, ">") == 0) || (strcmp(str, "2>") == 0);
 }
 
+static void push_cmd(cmd** to, cmd* val) {
+
+}
+
+static cmd* new_cmd() {
+    return calloc(1, sizeof(cmd));
+}
+
+static void free_cmds(cmd** c) {
+
+}
+
 cmdch* breakcommands(msvec* words) {
     cmdch* chain = malloc(sizeof(cmdch));
 
-    chain->size = 16;
-    chain->count = 0;
-    chain->cmds = malloc(chain->size * sizeof(cmd));
+    chain->first = NULL;
     chain->words = words;
+    chain->line = NULL;
+
+    cmd** curr = &chain->first;
 
     bool nextCmd = true;
     bool endsWithRed = false;
@@ -29,16 +42,9 @@ cmdch* breakcommands(msvec* words) {
 
     for (int i = 0 ; i < words->count; i++) {
         if (nextCmd) {
-            if (chain->count == chain->size) {
-                chain->size += 16;
-                chain->cmds = realloc(chain->cmds, chain->size * sizeof(cmd));
-            }
-            chain->cmds[chain->count].fd0 = NULL;
-            chain->cmds[chain->count].fd1 = NULL;
-            chain->cmds[chain->count].fd2 = NULL;
-            chain->cmds[chain->count].start = i;
-            chain->cmds[chain->count].stop = 0;
-            chain->cmds[chain->count].pipestonext = false;
+            *curr = new_cmd();
+            (*curr)->start = i;
+            (*curr)->stop = words->count;
             nextCmd = false;
             if (pipefromprev) {
                 usedfds = _mstdinfd;
@@ -51,13 +57,12 @@ cmdch* breakcommands(msvec* words) {
         }
         if (isredirector(words->arr[i].ptr)) {
             endsWithRed = true;
-            chain->cmds[chain->count].stop = i;
+            (*curr)->stop = i;
             nextCmd = true;
             do {
                 if (strcmp(words->arr[i].ptr, "|") == 0) { // that definitely is end of command
                     //if (usedfds & _mstdoutfd != 0) goto error;
                     //usedfds |= _mstdoutfd;
-                    chain->cmds[chain->count].pipestonext = true;
                     pipefromprev = true; // for next one
                     goto breakinnerloop;
                 }
@@ -66,27 +71,21 @@ cmdch* breakcommands(msvec* words) {
                     usedfds |= _mstdinfd;
                     i++;
                     if (i == words->count) goto error;
-                    chain->cmds[chain->count].fd0 = words->arr[i].ptr;
-                    /*(*cmds)[cmdcount].fd0 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
-                    strcpy((*cmds)[cmdcount].fd0, words->arr[i].ptr);*/
+                    (*curr)->fd0 = words->arr[i].ptr;
                 }
                 else if (strcmp(words->arr[i].ptr, ">") == 0) {
                     if (usedfds & _mstdoutfd != 0) goto error;
                     usedfds |= _mstdoutfd;
                     i++;
                     if (i == words->count) goto error;
-                    chain->cmds[chain->count].fd1 = words->arr[i].ptr;
-                    /*(*cmds)[cmdcount].fd1 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
-                    strcpy((*cmds)[cmdcount].fd1, words->arr[i].ptr);*/
+                    (*curr)->fd1 = words->arr[i].ptr;
                 }
                 else if (strcmp(words->arr[i].ptr, "2>") == 0) {
                     if (usedfds & _mstderrfd != 0) goto error;
                     usedfds |= _mstderrfd;
                     i++;
                     if (i == words->count) goto error;
-                    chain->cmds[chain->count].fd2 = words->arr[i].ptr;
-                    /*(*cmds)[cmdcount].fd2 = malloc(strlen(words->arr[i].ptr) * sizeof(char));
-                    strcpy((*cmds)[cmdcount].fd2, words->arr[i].ptr);*/
+                    (*curr)->fd2 = words->arr[i].ptr;
                 }
                 else {
                     goto breakinnerloop;
@@ -94,18 +93,11 @@ cmdch* breakcommands(msvec* words) {
             } while (++i < words->count);
 breakinnerloop:
             if (pipefromprev && i >= words->count) goto error;
-            chain->count++;
+            curr = &(*curr)->next;
         }
     }
-    if (!endsWithRed) { // chain->cmds[chain->count].stop == 0 && words->count > 1
-        chain->cmds[chain->count].stop = words->count;
-        chain->count++;
-    }
-    //
     return chain;
 error:
-    //printf("ERROR in cmd production");
-    chain->count++; // error can only occur when we started adding command
     freecmdch(chain);
     return NULL;
 }
@@ -210,6 +202,7 @@ void mstrcpy(mlstr* to, const char* from) {
 }
 
 void freemsvec(msvec* vec) {
+    if (vec == NULL) return;
     for (int i = 0; i < vec->size; i++) {
         free(vec->arr[i].ptr);
     }
@@ -219,7 +212,13 @@ void freemsvec(msvec* vec) {
 
 void freecmdch(cmdch* chain) {
     if (chain == NULL) return;
-    free(chain->cmds);
+    cmd* curr = chain->first;
+    cmd* nx;
+    while (curr) {
+        nx = curr->next;
+        free(curr);
+        curr = nx;
+    }
     freemsvec(chain->words);
     free(chain);
 }
@@ -242,4 +241,18 @@ void fittosize(mlstr* str, size_t size) {
         str->bytes = size + 10;
         str->ptr = realloc(str->ptr, str->bytes * sizeof(char));
     }
+}
+
+char* getLine(msvec* vec) {
+    size_t size = 0;
+    for (int i = 0; i < vec->count; i++) {
+        size += strlen(vec->arr[i].ptr) + 1;
+    }
+    char* line = malloc((size + 1) * sizeof(char));
+    line[0] = '\0';
+    for (int i = 0; i < vec->count; i++) {
+        strcat(line, vec->arr[i].ptr);
+        strcat(line, " ");
+    }
+    return line;
 }
