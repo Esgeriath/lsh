@@ -27,11 +27,9 @@ static void free_cmds(cmd** c) {
 }
 
 cmdch* breakcommands(msvec* words) {
-    cmdch* chain = malloc(sizeof(cmdch));
+    cmdch* chain = calloc(1, sizeof(cmdch));
 
-    chain->first = NULL;
     chain->words = words;
-    chain->line = NULL;
 
     cmd** curr = &chain->first;
 

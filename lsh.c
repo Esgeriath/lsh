@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
             goto prompt;
         }
         if (strcmp(words->arr[0].ptr, "jobs") == 0) {
-            // TODO: jobs command
+            list_jobs();
             goto prompt;
         }
 

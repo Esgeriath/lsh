@@ -1,3 +1,5 @@
+#define _INTERNAL_JOBS_C_DELCARATIONS_
+
 #include "jobs.h"
 #include <termios.h>
 #include <sys/ioctl.h>
@@ -8,26 +10,20 @@ static void handle_sighup(int signal) {
     exit(1);
 }
 
-// FIXME: this don't work at all lol
-static void chld_handler(int signal) {
-    int status;
-    for (cmdch* chain = first_job; chain; chain = chain->next_job) {
-        if (!job_is_stopped(chain)) { // something happend to foreground process
-            waitpid(- chain->first->pid, &status, WNOHANG);
-            if (WIFSTOPPED(status)) {
-                chain->first->status = S_STOPPED;
-            }
-/*
-            for (cmd* curr = jobs.arr[i]->first; curr; curr = curr->next) {
-                if (curr->status & S_RUNNING)
-                waitpid(curr->pid, &status, WNOHANG);
-                
-                if (WIFEXITED(status)) {
-                    //todo: removing block from this job
-                }
-            }*/
-        }
-    }
+/* Mark a stopped job chain as being running again. */
+void mark_job_as_running(cmdch* chain) {
+    for (cmd* cm = chain->first; cm; cm = cm->next)
+        cm->status = S_RUNNING;
+    chain->notified = 0;
+}
+
+/* Continue the job J. */
+void continue_job(cmdch* chain, bool foreground) {
+    mark_job_as_running(chain);
+    if (foreground)
+        put_job_in_foreground(chain, true);
+    else
+        put_job_in_background(chain, true);
 }
 
 // Store the status of the process pid that was returned by waitpid.
@@ -71,6 +67,15 @@ void update_status() {
     while (!mark_process_status(pid, status));
 }
 
+void list_jobs() {
+    update_status();
+    for (cmdch* ptr = first_job; ptr; ptr = ptr->next_job) {
+        printf("[%d]\t%s\t\t%s\n", ptr->internal_job_id, 
+        job_is_completed(ptr) ? "Completed" : job_is_stopped(ptr) ?
+        "Stopped" : "Running", ptr->line);
+    }
+}
+
 // Check for processes that have status information available,
 // blocking until all processes in the given job have reported.
 void wait_for_job(cmdch* chain) {
@@ -84,7 +89,7 @@ void wait_for_job(cmdch* chain) {
 }
 
 //Format information about job status for the user to look at.
-static void format_job_info (cmdch *chain, const char* status) {
+static void format_job_info(cmdch *chain, const char* status) {
     fprintf (stderr, "%ld (%s): %s\n", (long)chain->pgid, status, chain->line);
 }
 //*/
@@ -140,7 +145,7 @@ void put_job_in_foreground(cmdch* chain, bool cont) {
     // ones as assigned to job that created them
     tcgetattr(lsh_terminal, &chain->tmodes);
     tcsetattr(lsh_terminal, TCSADRAIN, &lsh_modes);
-    freecmdch(chain); // we won't use it anymore
+    freecmdch(chain); // we won't use it anymore TODO: handle stopped jobs here
 }
 
 

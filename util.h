@@ -17,8 +17,8 @@
 
 #include <termios.h>
 
-#define S_UNKNOWN   ((unsigned char)0b00000000)
-#define S_RUNNING   ((unsigned char)0b00000001)
+#define S_RUNNING   ((unsigned char)0b00000000)
+#define S_UNKNOWN   ((unsigned char)0b00000001)
 #define S_STOPPED   ((unsigned char)0b00000010)
 #define S_FINISHED  ((unsigned char)0b00000100)
 
